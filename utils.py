@@ -1,5 +1,6 @@
 import numpy as np
 from hcipy import *
+from astropy.io import fits
 
 ### UBVRIJHK Filter Info
 ## Taken from http://www.astronomy.ohio-state.edu/~martini/usefuldata.html
@@ -95,3 +96,16 @@ def number_of_photons(mag, filter_name, collecting_area):
     photons = photons*delta_lambda
     
     return photons 
+
+def save_field_to_fits(field, filename, path="./", verbose=False,overwrite=False):
+    '''
+    Save a field to a fits file
+    '''
+
+    #Convert a field to a numpy array
+    np_field = np.array(field.shaped)
+    hdu = fits.PrimaryHDU(np_field)
+    if verbose: 
+        print("Saving a field to {}".format(path+filename))
+    hdu.writeto(path+filename,overwrite=overwrite)
+
