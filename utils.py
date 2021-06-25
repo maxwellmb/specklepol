@@ -7,7 +7,7 @@ from astropy.io import fits
 ## Flux0 - erg/cm^2/s/A
 ## photons0 - photons/cm^2/s/A
 ## lambda_eff - um
-## delta_lambda - um 
+## delta_lambda - um
 
 filters = {
                 "U": {"Flux0": 4.175e-9, "lambda_eff":0.36 , "delta_lambda":0.06 , "photons0":756.1},
@@ -43,7 +43,7 @@ def make_lick_aperture(normalized=False, with_spiders=True):
     pupil_diameter = 3.048 #m
     spider_width1 = 0.75 * 0.0254 #m
     spider_width2 = 1.5 * 0.0254 #m
-    secondary_diameter = 0.9779 # 
+    secondary_diameter = 0.9779 #
     central_obscuration_ratio = secondary_diameter/pupil_diameter #
     spider_offset = [0,0.34] #m
 
@@ -80,22 +80,22 @@ def number_of_photons(mag, filter_name, collecting_area):
     Return the number of photons/s captured by the collecting
     area for the given magnitude and filter
     '''
-    
+
     photons0 = filters[filter_name]['photons0'] #units: photons/cm^2/s/A
-    
+
     #Convert to the correct magnitude
     photons = photons0*10**(mag/(-2.5))
-    
-    #Multiply by collecting area 
+
+    #Multiply by collecting area
     photons = photons*collecting_area*1e4 #Convert to cm^2
-    
+
     #Multiply by filter width
     delta_lambda = filters[filter_name]['delta_lambda']
     delta_lambda *=1e4 #Convert to of Angstrom
-    
+
     photons = photons*delta_lambda
-    
-    return photons 
+
+    return photons
 
 def save_field_to_fits(field, filename, path="./", verbose=False,overwrite=False):
     '''
@@ -105,7 +105,18 @@ def save_field_to_fits(field, filename, path="./", verbose=False,overwrite=False
     #Convert a field to a numpy array
     np_field = np.array(field.shaped)
     hdu = fits.PrimaryHDU(np_field)
-    if verbose: 
+    if verbose:
         print("Saving a field to {}".format(path+filename))
     hdu.writeto(path+filename,overwrite=overwrite)
 
+
+def supergauss_hw(HWHM,m,size):
+    """
+    creates a supergaussian window with a given HWHM, order, and size
+    """
+
+    k = -1.0 / (HWHM**m)
+    ds = np.array([[np.sqrt(np.array((x-size/2)**2+(y-size/2)**2)) for x in range(size)]
+        for y in range(size)])
+    arr = np.exp(k*ds**m)
+    return arr
