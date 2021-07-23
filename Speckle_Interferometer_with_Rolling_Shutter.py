@@ -196,9 +196,11 @@ while True:
     name = name + '.fits'
     command = 0
     if os.path.isfile(name):
+        print()
         print("File name already exists")
     else:
         break
 hdul.writeto(name)
-   
+print()
+print("FITS file generated.")  
 
