@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
 from utils import supergauss_hw
 from radial_profile import radial_data
@@ -9,7 +10,7 @@ summary of included functions:
     fourier_transform   - takes the Fourier transform of each image in array
     power_spectrum      - generates power spectra for image array, given FTs
     generate_ACF        - generates an array of autocorrelation functions given power spectra 
-    ACF_cc              - modifies ACF array for contrast curves
+    ACF_contrast        - returns speckle contrast curve for the given autocorrelation function
     R_U                 - returns the differential polarimetric visibility, R,  for Stokes U ; given FTs
     R_Q                 - returns the differential polarimetric visibility, R,  for Stokes Q ; given FTs
     IFT                 - returns Stokes Q or U vector, given R
@@ -33,7 +34,7 @@ def image_preprocessing(ims, gsigma, subframe_size):
     """
 
     npix = len(ims[0])
-    bpix = npix - int(0.05 * npix)
+    bpix = npix - int(0.1 * npix)
     ims_out = []
 
     for i in range(len(ims)):
@@ -80,49 +81,51 @@ def fourier_transform(ims, HWHM, m):
 
     for i in range(len(ims)):
         im = ims[i]
-
-        # make a copy
         im_ft = im.copy()
+
         FT = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(im_ft * sg)))
-        ims_ft_out.append(FT / FT[int(npix / 2), int(npix / 2)])
+        ims_ft_out.append(FT)
 
     return np.array(ims_ft_out, dtype=complex)
 
 
-def power_spectrum(ims_ft, wavelength, pupil_diameter, scaling):
+def power_spectrum(ims_ft, q, wavelength, pupil_diameter, scaling=1.):
     """
-    A function that returns a bias-subtracted, filtered array of power spectra, calculated using the input
-    FTs and utilizing radial data.
+    A function that returns two outputs: a bias-subtracted, filtered array of power spectra, calculated using the input
+    FTs and utilizing radial data, and the average power spectrum.
 
     Parameters
     ----------
     ims_ft          - input array of FTs
+    q               - the number of pixels per resolution element (= lambda f / D)
     wavelength      - wavelength of the wavefront in meters
     pupil_diameter  - pupil diameter in meters
-    scaling         - scalar that determines radial cutoff (fcut)
+    scaling         - scalar that determines radial cutoff (fcut) ; (default: 1.)
 
     Returns
     -------
-    ims_ps_out      - an array of the generated power spectra
+    ps_out      - a three dimensional array of the generated power spectra
+    avg_ps_out  - a two dimensional array of the average power spectrum
     """
-    ims_ps_out = []
+
     npix = len(ims_ft[0])
+    bpix = npix - int(0.1 * npix)
 
+    ps_out = []
 
-    plate_scale = 0.25 * wavelength / pupil_diameter * 206265.
-    ps_mpp = 1. / (npix * plate_scale) * 206265. * wavelength
+    plate_scale = wavelength / (pupil_diameter * q) * 206265.
+    ps_mpp = 1. / (npix * plate_scale) * 206265. * wavelength # (meters per pixel)
     fcut = pupil_diameter / ps_mpp * scaling
-
     for i in range(len(ims_ft)):
         im_ft = ims_ft[i]
         im_ft_in = im_ft.copy()
+
         PS = np.abs(im_ft_in / im_ft_in[int(npix / 2), int(npix / 2)]) ** 2
 
-        rad_stats = radial_data(PS)
-
         PS_bsub = PS.copy()
-        PS_bsub -= np.mean(PS[int(0.9 * npix), int(0.9 * npix):])
+        PS_bsub -= np.mean(PS[(bpix):, (bpix):])
 
+        rad_stats = radial_data(PS_bsub)
         PS_filt = PS_bsub.copy()
 
         for xx in range(len(PS_filt)):
@@ -132,55 +135,70 @@ def power_spectrum(ims_ft, wavelength, pupil_diameter, scaling):
                     drad = rad_stats.r - rad
                     val = rad_stats.mean[np.where(np.abs(drad) == np.min(np.abs(drad)))][0]
                     PS_filt[yy, xx] /= val
+        ps_out.append(PS_filt)
 
+    avg_ps = np.sum(ps_out, axis=0)
 
-
-        ims_ps_out.append(PS_filt)
-
-        return np.array(ims_ps_out)
+    return np.array(ps_out), avg_ps
 
 
 def generate_ACF(ims_ps):
     """
-    A function that, upon receiving an array of power spectra, returns the corresponding normalized
+    A function that, upon receiving the average power spectrum, returns the corresponding normalized average
     autocorrelation function.
 
     Parameters
     ----------
-    ims_ps      - input array of power spectra
+    ims_ps      - a two dimensional input array of the average power spectrum
 
     Returns
     -------
-    ims_acf_out - an array of the generated autocorrelation functions
+    ims_acf_out - a two dimensional array of the average autocorrelation function
     """
 
     npix = len(ims_ps[0])
-    ims_acf_out = []
 
-    for i in range(len(ims_ps)):
-        ps = ims_ps[i]
-        im_ps = ps.copy()
+    im_ps = ims_ps.copy()
 
-        ACF_filt = np.fft.fftshift(np.fft.fft2(np.fft.fftshift(im_ps)))
-        ACF_norm = ACF_filt / ACF_filt[int(npix / 2), int(npix / 2)]
-        ims_acf_out.append(ACF_norm)
+    ACF_filt = np.fft.fftshift(np.fft.fft2(np.fft.fftshift(im_ps)))
+    ACF_norm = ACF_filt / ACF_filt[int(npix / 2), int(npix / 2)]
 
-    return np.array(ims_acf_out)
+    return ACF_norm
 
-def ACF_cc(ACF):
+
+def ACF_contrast(ACF, q, wavelength, pupil_diameter, magnitude, sigma=5, figure_size=(5, 4)):
     """
     A function that generates an array of suitable ACFs to generate contrast curves.
 
     Parameters
     ----------
-    ACF - input array of ACFs
-
+    ACF            - input array of ACFs
+    q              - the number of pixels per resolution element (= lambda f / D)
+    wavelength     - wavelength of the wavefront in meters
+    pupil_diameter - pupil diameter in meters
+    magnitude      - object magnitude
+    figure_size    - size of returned plot ; (optional, default:(5,4) )
+    sigma          - determines contrast level, e.g. sigma=5 --> 5-sigma contrast curve
+                     (optional, default: 5)
     Returns
     -------
-    ACF_ccs_out - an array of ACFs to generate contrast curves
+
     """
-    ACF_ccs_out = -2.5*np.log10((1.-np.sqrt(1.-(2*ACF)**2))/(2*ACF))
-    return ACF_ccs_out
+    plate_scale = wavelength / (pupil_diameter * q) * 206265. # (arcsec/pixel)
+    rad_ACF = radial_data(np.abs(ACF), annulus_width=2)
+    ACF_cc = -2.5 * np.log10((1. - np.sqrt(1. - (2 * (sigma * rad_ACF.std)) ** 2)) / (2 * (sigma * rad_ACF.std)))
+    ACF_xax = np.array(range(len(rad_ACF.mean))) * plate_scale # arcsec 
+
+    f = plt.figure(figsize=figure_size)
+    plt.plot(ACF_xax, ACF_cc, label='V = ' + str(magnitude) + ' mag', lw=3)
+    #plt.xlim(0.0, 2.0)
+    plt.gca().invert_yaxis()
+    plt.legend(loc='lower left')
+    plt.ylabel(r'' + str(sigma) + ' $\sigma$ Contrast (mag)')
+    plt.xlabel(r'Separation (arcsec)')
+    plt.title('VIPER Conventional Speckle')
+    plt.show()
+
 
 
 def R_U(f_L, f_R, N_e, theta, h):
@@ -201,14 +219,14 @@ def R_U(f_L, f_R, N_e, theta, h):
     R_U   -  the differential polarimetric visibility, R, for Stokes U
 
     """
-    for i in range(len(f_L)):
-        thetas = np.ones(f_L.shape)
-        for x in range(len(thetas)):
-            thetas[x] = thetas[x] * theta[x]
-        num = np.mean((f_L - f_R) * (f_L + f_R).conj() * np.sin(h * np.radians(thetas)), axis=0)
-        den = np.mean((f_L + f_R) * (f_L + f_R).conj(), axis=0) - 1.0 / N_e
 
-        R_U = 1 + num / den
+    thetas = np.ones(f_L.shape)
+    for x in range(len(thetas)):
+        thetas[x] = thetas[x] * theta[x]
+    num = np.mean((f_L - f_R) * (f_L + f_R).conj() * np.sin(h * np.radians(thetas)), axis=0)
+    den = np.mean((f_L + f_R) * (f_L + f_R).conj(), axis=0) - 1.0 / N_e
+
+    R_U = 1 + num / den
     return R_U
 
 
@@ -231,12 +249,13 @@ def R_Q(f_L, f_R, N_e, theta, h):
     """
     thetas = np.ones(f_L.shape)
     for x in range(len(thetas)):
-        thetas[x] = thetas[x]*theta[x]
-    num = np.mean((f_L - f_R) * (f_L + f_R).conj() * np.cos(h*np.radians(thetas)),axis=0)
-    den = np.mean((f_L + f_R) * (f_L + f_R).conj(),axis=0) - 1.0/N_e
+        thetas[x] = thetas[x] * theta[x]
+    num = np.mean((f_L - f_R) * (f_L + f_R).conj() * np.cos(h * np.radians(thetas)), axis=0)
+    den = np.mean((f_L + f_R) * (f_L + f_R).conj(), axis=0) - 1.0 / N_e
 
-    R_Q = 1 + num/den
+    R_Q = 1 + num / den
     return R_Q
+
 
 def IFT(R_in):
     """
@@ -252,10 +271,9 @@ def IFT(R_in):
     R_out - the corresponding Stokes vector
 
     """
-    R_out = []
     R = R_in.copy()
 
     IFT_R = np.fft.ifftshift(np.fft.ifft2(np.fft.ifftshift(R - 1.0)))
-    R_out.append(IFT_R)
+    R_out = np.real(IFT_R)
 
     return R_out
