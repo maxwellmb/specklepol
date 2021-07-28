@@ -34,7 +34,7 @@ def image_preprocessing(ims, gsigma, subframe_size):
     """
 
     npix = len(ims[0])
-    bpix = npix - int(0.1 * npix)
+    bpix = int(0.9*npix)
     ims_out = []
 
     for i in range(len(ims)):
@@ -83,7 +83,7 @@ def fourier_transform(ims, HWHM, m):
         im = ims[i]
         im_ft = im.copy()
 
-        FT = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(im_ft * sg)))
+        FT = np.fft.fftshift(np.fft.fft2(np.fft.fftshift(im_ft * sg)))
         ims_ft_out.append(FT)
 
     return np.array(ims_ft_out, dtype=complex)
@@ -109,7 +109,7 @@ def power_spectrum(ims_ft, q, wavelength, pupil_diameter, scaling=1.):
     """
 
     npix = len(ims_ft[0])
-    bpix = npix - int(0.1 * npix)
+    bpix = int(0.9*npix)
 
     ps_out = []
 
