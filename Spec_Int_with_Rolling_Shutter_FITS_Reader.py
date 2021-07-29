@@ -64,9 +64,6 @@ plt.ylim(200,600)
 plt.colorbar()
 plt.savefig(name + "_Unprocessed_Image_Comparison.png")
 
-input("Check image")
-
-
 ## Combine Image Data
 print("Combining Image Data")
 npix = int(np.sqrt(np.prod(fits_file[1].data.shape)))
