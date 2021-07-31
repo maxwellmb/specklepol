@@ -13,12 +13,17 @@ from processing import *
 ### INPUT PARAMETERS BEGIN HERE ###
 
 ## Metadata
-name = "Test_Prime_Wind_Test" # Name you want to use to save images
-fits_name = "Test_Prime_BSI_Fast_Wind.fits" # Type name of rolling shutter FITS file you want to read
+name = "ProEM_vs_ORCA_Quest_Analysis" # Name you want to use to save images
 
-second_shutter_test = False # TRUE if you wish to load a second shutter FITS simultaneously and overlay those results
-second_fits_name = "Test_Prime_BSI_Slow_Wind.fits" # Name of Second Shutter Data. Is not used if second_shutter_test = False
+fits_name = "ProEM_HS_512BX3.fits" # Type name of FITS file you want to read
+first_shutter_name = "ProEM" # Name of the first shutter. Used for legends
+
+second_shutter_test = True # TRUE if you wish to load a second FITS simultaneously and overlay those results
+second_fits_name = "ORCA Quest.fits" # Name of Second Shutter Data. Is not used if second_shutter_test = False
+second_shutter_name = "ORCA Quest" # Name of Second Shutter. Used for Legends
+
 sigma = 5 # determines contrast level, e.g. sigma=5 --> 5-sigma contrast curve
+
 ### INPUT PARAMETERS END HERE ###
 
 ## Generate name strings
@@ -28,9 +33,9 @@ contrast_curve_name = name + "_Contrast_Curve.jpg"
 
 ## If Second True, Generate name strings
 if second_shutter_test == True:
-    second_radial_name = name + '_Radial_Profile_with_Second_Overlay.jpg'
-    second_speckle_image_name = name + "_Speckle_Images_with_Second.jpg"
-    second_contrast_curve_name =  name + "_Contrast_Curve_with_Second_Overlay.jpg"
+    second_radial_name = name + '_Radial_Profile_with_Overlay.jpg'
+    second_speckle_image_name = name + "_Speckle_Images_with_Comparison.jpg"
+    second_contrast_curve_name =  name + "_Contrast_Curve_with_Overlay.jpg"
 
 
 ## Load the FITS fileprint("Loading FITS File")
@@ -54,15 +59,6 @@ q = fits_file[0].header['Q']
 q = q.split(' ')
 q = float(q[0])
 
-## Generating Sample Image
-im1 = fits_file[1].data
-if second_shutter_test == True:
-    im2 = second_fits_file[1].data
-plt.imshow(im1, vmax = 3000)
-plt.xlim(200,600)
-plt.ylim(200,600)
-plt.colorbar()
-plt.savefig(name + "_Unprocessed_Image_Comparison.png")
 
 ## Combine Image Data
 print("Combining Image Data")
@@ -129,9 +125,9 @@ rad_stats = radial_data(PS[0])
 if second_shutter_test == True:
     second_rad_stats = radial_data(second_PS[0])
 f = plt.figure(figsize = (10,8))
-plt.plot(rad_stats.r, rad_stats.mean, label = name + "_First_Shutter")
+plt.plot(rad_stats.r, rad_stats.mean, label = first_shutter_name)
 if second_shutter_test == True:
-    plt.plot(second_rad_stats.r, second_rad_stats.mean, label = name + "_Second_Shutter")
+    plt.plot(second_rad_stats.r, second_rad_stats.mean, label = second_shutter_name)
 plt.legend(loc='upper right')
 plt.xlabel('Radial coordinate')
 plt.ylabel('Mean')
@@ -152,39 +148,39 @@ if second_shutter_test == True:
     plt.imshow(ims_p[0])
     ax.set_yticks([])
     ax.set_xticks([])
-    plt.title('Rolling_Shutter_Image')
+    plt.title(first_shutter_name + ' Image')
 
     ax = f.add_subplot(232)
-    plt.title('Rolling_Shutter_Power Spectrum')
+    plt.title(first_shutter_name + ' Power Spectrum')
     plt.imshow(np.abs(PS[0]))
     ax.set_yticks([])
     ax.set_xticks([])
 
     fsub = 30
     ax=f.add_subplot(233)
-    plt.imshow(np.abs(ACF[0])[int(550/2)-fsub:int(550/2)+fsub,int(550/2)-fsub:int(550/2)+fsub])
+    plt.imshow(np.abs(ACF)[int(550/2)-fsub:int(550/2)+fsub,int(550/2)-fsub:int(550/2)+fsub])
     ax.set_yticks([])
     ax.set_xticks([])
-    plt.title('Rolling_Shutter_Autocorrelation')
+    plt.title(first_shutter_name + ' Autocorrelation')
 
     ax=f.add_subplot(234)
     plt.imshow(second_ims_p[0])
     ax.set_yticks([])
     ax.set_xticks([])
-    plt.title('Second_Shutter_Image')
+    plt.title(second_shutter_name + ' Image')
 
     ax = f.add_subplot(235)
-    plt.title('Second_Shutter_Power Spectrum')
+    plt.title(second_shutter_name + ' Power Spectrum')
     plt.imshow(np.abs(second_PS[0]))
     ax.set_yticks([])
     ax.set_xticks([])
 
     fsub = 30
     ax=f.add_subplot(236)
-    plt.imshow(np.abs(second_ACF[0])[int(550/2)-fsub:int(550/2)+fsub,int(550/2)-fsub:int(550/2)+fsub])
+    plt.imshow(np.abs(second_ACF)[int(550/2)-fsub:int(550/2)+fsub,int(550/2)-fsub:int(550/2)+fsub])
     ax.set_yticks([])
     ax.set_xticks([])
-    plt.title('Second_Shutter_Autocorrelation')
+    plt.title(second_shutter_name + ' Autocorrelation')
     plt.savefig(second_speckle_image_name)
 else:
     ax=f.add_subplot(131)
@@ -222,15 +218,20 @@ if second_shutter_test == True:
     second_ACF_xax = np.array(range(len(rad_ACF.mean))) * plate_scale # arcsec 
 
 f = plt.figure(figsize=(10,8))
-plt.plot(ACF_xax, ACF_cc, label='First Shutter, V = ' + str(mag) + ' mag', lw=3)
+plt.plot(ACF_xax, ACF_cc, label=first_shutter_name + ', V = ' + str(mag) + ' mag', lw=3)
 if second_shutter_test == True:
-    plt.plot(ACF_xax, ACF_cc, label='Second Shutter, V = ' + str(mag) + ' mag', lw=3)
+    plt.plot(second_ACF_xax, second_ACF_cc, label= second_shutter_name + ', V = ' + str(mag) + ' mag', lw=3)
 plt.xlim(0.0, 2.0)
 plt.gca().invert_yaxis()
 plt.legend(loc='lower left')
 plt.ylabel(r'' + str(sigma) + ' $\sigma$ Contrast (mag)')
 plt.xlabel(r'Separation (arcsec)')
 plt.title('VIPER Conventional Speckle')
+## Saving Contrast Curve
+if second_shutter_test == True:
+    plt.savefig(second_contrast_curve_name, dpi=300)
+else:
+    plt.savefig(contrast_curve_name, dpi=300)
 plt.show()
 
 ## Writing Contrast Curve Data into CSV file
@@ -248,11 +249,6 @@ with open(csv_name, 'w', newline='') as csvfile:
         writer.writerow(["second xax", second_ACF_xax])
         writer.writerow(["second cc", second_ACF_cc])
 
-## Saving Contrast Curve
-if second_shutter_test == True:
-    plt.savefig(second_contrast_curve_name, dpi=300)
-else:
-    plt.savefig(contrast_curve_name, dpi=300)
 
 
 

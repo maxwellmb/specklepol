@@ -13,27 +13,27 @@ from processing import *
 ### INPUT PARAMETERS BEGIN HERE ###
 
 ## Metadata
-name = "Test2_Prime_BSI" # filename, no extension
+name = "ProEM_HS_512BX3" # filename you want to write, no extension
 overwrite = True # True if you wish to overwrite files with the same name
-global_shutter_test = True # True if you wish to test a global shutter simultaneously and generate a fits file
 
-## Initial Values for Rolling Shutter
-fps = 173 # Readout speed of the detector in frames per second
-detector_size = 512 # width of shortest side of detector. Number of rows in the detector
-number_of_subdivisions = 24 # Number of rows that subdivide the detector to simulate a rolling shutter.
+## Initial Values for Shutter
+fps = 532 # Readout speed of the detector in frames per second
+detector_size = 61 # width of shortest side of detector. Number of rows in the detector
+number_of_subdivisions = 1 # Number of rows that subdivide the detector to simulate a rolling shutter.
+                           # Set this equal to 1 if testing a globla shutter
 
 ## Properties of the Focal Grid
 q=2 # Number of pixels per resolution element
 nairy = 200 #The spatial extent of the grid radius in resolution elements (=lambda f/D)
 
 ## Exposure time and total number of exposures
-exposure_time = 0.01 # Exposure time in seconds
-exposure_total = 5 # Total number of exposures
+exposure_time = 0.02 # Exposure time in seconds. Make sure this is greater than 1/FPS
+exposure_total = 100 # Total number of exposures
 
 ## Setting Up the Atmosphere
 seeing = 1.75
 outer_scale = 40. # (meter) 
-velocity = 20. # (m/s) 
+velocity = 30. # (m/s) 
                                     
 ## Setting up the telescope
 pupil_diameter = 3.048 # (meter)
@@ -43,10 +43,11 @@ filter_name = 'V' # Name of filter
 telescope_pupil_generator = make_lick_aperture()
 
 ## Setting up the noisy detector
-dark_current = 0.12 # Dark Current
-read_noise = 1.1 # Read Noise
+quantum_efficiency = 0.47 # Quantum Efficiency at given wavelength
+dark_current = 0.001 # Dark Current
+read_noise = 0.01 # Read Noise
 flat_field = 0 # Flat Field
-photon_noise = True # Photon Noise
+photon_noise = True # Photon Noise. If you are having trouble with low FPS giving errors set this to False.
 
 ## Add a Primary and Companion
 # Primary parameters
@@ -67,10 +68,6 @@ wavelength = filters[filter_name]['lambda_eff'] * 1e-6 # (meter)
 ## Generate name strings
 fits_name = name + ".fits"
 
-## If Global, Generate name strings
-if global_shutter_test == True:
-    global_fits_name = name + "_Global.fits"
-    
 ## Checking to see if filenames exists
 if os.path.isfile(fits_name):
     if overwrite:
@@ -80,17 +77,7 @@ if os.path.isfile(fits_name):
         print("Error, file name ",fits_name," already exists. Overwrite was not allowed.")
         print("Exiting program...")
         quit()
-## Checking to see if Global filenames exist
-if global_shutter_test == True:
-    if os.path.isfile(global_fits_name) and global_shutter_test == True:
-        if overwrite:
-            print("File name ", global_fits_name, " already exists. Preparing to overwrite.") 
-            os.remove(global_fits_name)
-        else:
-            print("Error, file name ",global_fits_name," already exists. Overwrite was not allowed.")
-            print("Exiting program...")
-            quit()
-    
+
 ## Generating the pupil grid
 print("Generating the pupil grid")
 pupil_grid = make_pupil_grid(grid_size, diameter=pupil_diameter)
@@ -123,14 +110,14 @@ prop = FraunhoferPropagator(pupil_grid, focal_grid,
 print("Generating wavefront of primary and companion")
 pupil_wavefront = Wavefront(telescope_pupil, wavelength,
                             input_stokes_vector=stokes_vector)
-pupil_wavefront.total_power = number_of_photons(mag,filter_name,collecting_area,) #In photons/s
+pupil_wavefront.total_power = number_of_photons(mag,filter_name,collecting_area,)*quantum_efficiency #In photons/s
 wf_planet = Wavefront(telescope_pupil*np.exp(4j*np.pi*pupil_grid.x*angular_separation/pupil_diameter),
                       wavelength,
                       input_stokes_vector=stokes_ps)
-wf_planet.total_power = contrast * number_of_photons(mag,filter_name,collecting_area,) # (photons/s)
+wf_planet.total_power = contrast * number_of_photons(mag,filter_name,collecting_area,)*quantum_efficiency # (photons/s)
 
 ## Create the FITS file
-print("Creating the FITS file")
+print("Creating the Rolling FITS file")
 hdr = fits.Header()
 hdr['Title'] = name
 hdr['Author'] = "Written by Kyle Lam."
@@ -148,6 +135,7 @@ hdr['PupDiamt'] = str(pupil_diameter) + " # Pupil Diameter"
 hdr['FNum'] = str(f_number) + " # F Number"
 hdr['GridSize'] = str(grid_size) + " # Grid Size"
 hdr['FiltName'] = str(filter_name) + " # Filter Name"
+hdr['QE'] = str(quantum_efficiency) + " # Quantum Efficiency"
 hdr['DarkCurr'] = str(dark_current) + " # Dark Current"
 hdr['RdNoise'] = str(read_noise) + " # Read Noise"
 hdr['FltField'] = str(flat_field) + "# Flat Field"
@@ -161,31 +149,30 @@ hdr['Wavelnth'] = str(wavelength) + " # Wavelength"
 empty_primary = fits.PrimaryHDU(header=hdr)
 hdul = fits.HDUList([empty_primary])
 
-## Create the rolling shutter image
-print("Generating the rolling shutter image")
+## Create the shutter image
+print("Generating the Shutter Image")
 detector = NoisyDetector(focal_grid, dark_current_rate= dark_current, 
                         read_noise=read_noise, flat_field=flat_field, 
                         include_photon_noise=photon_noise)
 number_of_rows = int(np.sqrt(focal_grid.size))# Width of the focal plane. Number of in rows the FOCAL PLANE.
 row_layout = np.linspace(0, number_of_rows, number_of_subdivisions, dtype = "int")
-row_readout_rate = 1/fps/detector_size
-row_exposure_time = row_readout_rate*number_of_rows/number_of_subdivisions
-start_time = time.perf_counter()
-layer.t = exposure_time
+row_readout_time = 1/(fps*number_of_rows)
+row_differential_time = row_readout_time*number_of_rows/number_of_subdivisions
+layer.t = 0
 for i in range(exposure_total):
-    layer.t+=exposure_time-(row_exposure_time*number_of_subdivisions)
-    detector.integrate(prop((layer(pupil_wavefront))),exposure_time-(row_exposure_time*number_of_subdivisions))
-    detector.integrate(prop((layer(wf_planet))),exposure_time-(row_exposure_time*number_of_subdivisions)) 
+    layer.t += exposure_time-(row_differential_time*number_of_subdivisions)
+    detector.integrate(prop((layer(pupil_wavefront))),exposure_time-(row_differential_time*number_of_subdivisions))
+    detector.integrate(prop((layer(wf_planet))),exposure_time-(row_differential_time*number_of_subdivisions)) 
     image_comb = detector.read_out()
-    for j in row_layout:
-        layer.evolve_until(row_exposure_time)
-        detector.integrate(prop((layer(pupil_wavefront))),row_exposure_time)
-        detector.integrate(prop((layer(wf_planet))),row_exposure_time)   
+    for j in range(number_of_subdivisions):
+        layer.t += row_differential_time
+        detector.integrate(prop((layer(pupil_wavefront))),row_differential_time)
+        detector.integrate(prop((layer(wf_planet))),row_differential_time)   
         image_row = detector.read_out()
-        start = int(focal_grid.size*(j))
-        end = int(focal_grid.size*((j+1)))
+        start = int(focal_grid.size*(j)/number_of_subdivisions)
+        end = int(focal_grid.size*((j+1)/number_of_subdivisions))
         image_comb[start:end]+=image_row[start:end]        
-        print("Percent complete = ", round((j+i*int(number_of_rows))/(number_of_rows*exposure_total) * 100, 3), end = '\r')
+        print("Percent complete = ", round(((1+j+i*number_of_subdivisions))/(number_of_subdivisions*exposure_total) * 100, 3), end = '\r')
     image_hdu = fits.ImageHDU(image_comb.shaped)
     hdul.append(image_hdu)
 
@@ -193,47 +180,7 @@ for i in range(exposure_total):
 print()
 print("Writing the FITS file")
 hdul.writeto(fits_name)
-header_name = name + "_header.txt"
+header_name = name + "_Header.txt"
 hdul[0].header.totextfile(header_name, endcard = False, overwrite = True)
 print("FITS file", fits_name,  "generated.")
     
-## If Include Global Test, Generate Global Image
-if global_shutter_test == True:
-    print("Generating Global Shutter Image")
-    number_of_subdivisions = 1
-    detector = NoisyDetector(focal_grid, dark_current_rate= dark_current, 
-                        read_noise=read_noise, flat_field=flat_field, 
-                        include_photon_noise=photon_noise)
-    number_of_rows = int(np.sqrt(focal_grid.size))# Width of the focal plane. Number of in rows the FOCAL PLANE.
-    row_layout = np.linspace(0, number_of_rows, number_of_subdivisions, dtype = "int")
-    row_readout_rate = 1/fps/detector_size
-    row_exposure_time = row_readout_rate*number_of_rows/number_of_subdivisions
-    start_time = time.perf_counter()
-    layer.t = exposure_time
-    for i in range(exposure_total):
-        layer.t+=exposure_time-(row_exposure_time*number_of_subdivisions)
-        detector.integrate(prop((layer(pupil_wavefront))),exposure_time-(row_exposure_time*number_of_subdivisions))
-        detector.integrate(prop((layer(wf_planet))),exposure_time-(row_exposure_time*number_of_subdivisions)) 
-        image_comb = detector.read_out()
-        for j in row_layout:
-            layer.evolve_until(row_exposure_time)
-            detector.integrate(prop((layer(pupil_wavefront))),row_exposure_time)
-            detector.integrate(prop((layer(wf_planet))),row_exposure_time)   
-            image_row = detector.read_out()
-            start = int(focal_grid.size*(j))
-            end = int(focal_grid.size*((j+1)))
-            image_comb[start:end]+=image_row[start:end]        
-            print("Percent complete = ", round((j+i*int(number_of_rows))/(number_of_rows*exposure_total) * 100, 3), end = '\r')
-        image_hdu = fits.ImageHDU(image_comb.shaped)
-        hdul.append(image_hdu)
-    
-    # Adjust the header of the FITS file
-    hdr['NSubdivi'] = str(number_of_subdivisions) + " # Number of Subdivisions"
-    hdr['Title'] = global_fits_name
-    header_name = name + "_Global_Header.txt"
-    hdul[0].header.totextfile(header_name, endcard = False, overwrite = overwrite)
-    # Write the Global FITS file
-    print()
-    print("Writing the Global FITS file")
-    hdul.writeto(global_fits_name)
-    print("FITS file", global_fits_name,  "generated.")
