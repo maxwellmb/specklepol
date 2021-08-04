@@ -23,18 +23,20 @@ def image_preprocessing(ims, gsigma, subframe_size):
 
     Parameters
     ----------
-    ims             - the array of images to be processed
+    ims             - the array of images to be processed ; 
+                      --> array dimensions, shape : 3-dim , (# of images, # of y pixels, # of x pixels) 
     gsigma          - standard deviation for Gaussian kernel
     subframe_size   - the desired size of final image in pixels ; (e.g. 600 -yields-> image of 600x600 pixels)
                       (note: subframe_size must be less pixels than the input image)
 
     Returns
     -------
-    ims_out - a centered, background subtracted array of images
+    ims_out         - a centered, background subtracted array of images
+                      --> array dimensions, shape : 3-dim , (# of images, # of y pixels, # of x pixels)
     """
 
     npix = len(ims[0])
-    bpix = int(0.9*npix)
+    bpix = int(0.9 * npix)
     ims_out = []
 
     for i in range(len(ims)):
@@ -67,12 +69,14 @@ def fourier_transform(ims, HWHM, m):
     Parameters
     ----------
     ims        - input array of images
+                 --> array dimensions, shape : 3-dim , (# of images, # of y pixels, # of x pixels)
     HWHM       - half-width at half maximum for supergaussian window
     m          - desired order of supergaussian window
 
     Returns
     -------
     ims_ft_out - A fourier transformed array of images with a supergaussian window applied.
+                 --> array dimensions, shape : 3-dim , (# of images, # of y pixels, # of x pixels)
 
     """
     npix = len(ims[0])
@@ -104,17 +108,20 @@ def power_spectrum(ims_ft, q, wavelength, pupil_diameter, scaling=1.):
 
     Returns
     -------
-    ps_out      - a three dimensional array of the generated power spectra
-    avg_ps_out  - a two dimensional array of the average power spectrum
+    ps_out          - array of the generated power spectra
+                      --> array dimensions, shape :  3-dim , (# of images, # of y pixels, # of x pixels)
+    avg_ps_out      - array of the average power spectrum
+                      --> array dimensions, shape : 2-dim , (# of y pixels, # of x pixels)
+    
     """
 
     npix = len(ims_ft[0])
-    bpix = int(0.9*npix)
+    bpix = int(0.9 * npix)
 
     ps_out = []
 
     plate_scale = wavelength / (pupil_diameter * q) * 206265.
-    ps_mpp = 1. / (npix * plate_scale) * 206265. * wavelength # (meters per pixel)
+    ps_mpp = 1. / (npix * plate_scale) * 206265. * wavelength  # (meters per pixel)
     fcut = pupil_diameter / ps_mpp * scaling
     for i in range(len(ims_ft)):
         im_ft = ims_ft[i]
@@ -149,11 +156,12 @@ def generate_ACF(ims_ps):
 
     Parameters
     ----------
-    ims_ps      - a two dimensional input array of the average power spectrum
-
+    ims_ps      - array of the average power spectrum
+                  --> array dimensions, shape : 2-dim, (# of y pixels, # of x pixels)
     Returns
     -------
     ims_acf_out - a two dimensional array of the average autocorrelation function
+                  --> array dimensions, shape : 2-dim, (# of y pixels, # of x pixels)
     """
 
     npix = len(ims_ps[0])
@@ -168,11 +176,12 @@ def generate_ACF(ims_ps):
 
 def ACF_contrast(ACF, q, wavelength, pupil_diameter, magnitude, sigma=5, figure_size=(5, 4)):
     """
-    A function that generates an array of suitable ACFs to generate contrast curves.
+    A function that generates a contrast curve for a given ACF.
 
     Parameters
     ----------
-    ACF            - input array of ACFs
+    ACF            - input array of ACF 
+                     --> array dimensions, shape : 2-dim , (# of y pixels, # of x pixels)
     q              - the number of pixels per resolution element (= lambda f / D)
     wavelength     - wavelength of the wavefront in meters
     pupil_diameter - pupil diameter in meters
@@ -184,21 +193,30 @@ def ACF_contrast(ACF, q, wavelength, pupil_diameter, magnitude, sigma=5, figure_
     -------
 
     """
-    plate_scale = wavelength / (pupil_diameter * q) * 206265. # (arcsec/pixel)
+    plate_scale = wavelength / (pupil_diameter * q) * 206265.   # (arcsec/pixel)
     rad_ACF = radial_data(np.abs(ACF), annulus_width=2)
     ACF_cc = -2.5 * np.log10((1. - np.sqrt(1. - (2 * (sigma * rad_ACF.std)) ** 2)) / (2 * (sigma * rad_ACF.std)))
-    ACF_xax = np.array(range(len(rad_ACF.mean))) * plate_scale # arcsec 
+    ACF_xax = np.array(range(len(rad_ACF.mean))) * plate_scale  # arcsec
+    ACF_fr = 10 ** (-ACF_cc / 2.5)                              # flux ratio for second y-axis
 
-    f = plt.figure(figsize=figure_size)
-    plt.plot(ACF_xax, ACF_cc, label='V = ' + str(magnitude) + ' mag', lw=3)
-    #plt.xlim(0.0, 2.0)
-    plt.gca().invert_yaxis()
+    fig, ax1 = plt.subplots(figsize=figure_size)
+    color = 'tab:blue'
+    label = 'V = ' + str(magnitude) + ' mag'
+
+    ax1.set_xlabel(r'Separation (arcsec)')
+    ax1.set_ylabel(r'' + str(sigma) + ' $\sigma$ Contrast (mag)') 
+    ax1.plot(ACF_xax, ACF_cc, label=label, lw=3, color=color)
     plt.legend(loc='lower left')
-    plt.ylabel(r'' + str(sigma) + ' $\sigma$ Contrast (mag)')
-    plt.xlabel(r'Separation (arcsec)')
-    plt.title('VIPER Conventional Speckle')
-    plt.show()
+    plt.gca().invert_yaxis()
 
+    ax2 = ax1.twinx()                                           # second y-axis
+    ax2.set_ylabel('Flux Ratio')  
+    ax2.plot(ACF_xax, ACF_fr, color=color)
+    plt.yscale("log")                                           # log scale
+
+    plt.title('VIPER Conventional Speckle')
+    fig.tight_layout() 
+    plt.show()
 
 
 def R_U(f_L, f_R, N_e, theta, h):
@@ -208,8 +226,10 @@ def R_U(f_L, f_R, N_e, theta, h):
 
     Parameters
     ----------
-    f_L   -  left side of FTs (numpy array of images)
-    f_r   -  right side of FTs (numpy array of images)
+    f_L   -  input array of left side FTs 
+             --> array dimensions, shape : 3-dim , (# of images, # of y pixels, # of x pixels)
+    f_r   -  input array of right side FTs
+             --> array dimensions, shape : 3-dim , (# of images, # of y pixels, # of x pixels)
     N_e   -  average number of photons in a single frame
     theta -  half-wave plate angle (measured in degrees)
     h     -  number of harmonics
@@ -237,8 +257,10 @@ def R_Q(f_L, f_R, N_e, theta, h):
 
     Parameters
     ----------
-    f_L   -  left side of FTs (numpy array of images)
-    f_r   -  right side of FTs (numpy array of images)
+    f_L   -  input array of left side FTs
+             --> array dimensions, shape : 3-dim , (# of images, # of y pixels, # of x pixels)
+    f_r   -  input array of right side FTs
+             --> array dimensions, shape : 3-dim , (# of images, # of y pixels, # of x pixels)
     N_e   -  average number of photons in a single frame
     theta -  half-wave plate angle (measured in degrees)
     h     -  number of harmonics
