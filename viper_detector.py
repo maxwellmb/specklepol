@@ -200,7 +200,7 @@ class iXon887(Detector):
 		elif filter == 'R' or filter == 'r':
 			self.QE = 0.869/2
 		elif filter == 'I' or filter == 'i':
-			self.QE = 0.479
+			self.QE = 0.479/2
 		else:
 			raise ValueError("Error, invalid filter name.")
 
