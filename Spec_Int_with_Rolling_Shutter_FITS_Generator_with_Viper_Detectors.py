@@ -10,16 +10,17 @@ import csv
 from astropy.io import fits
 from processing import *
 import viper_detector
+import winsound
 
 ### INPUT PARAMETERS BEGIN HERE ###
-
 ## Metadata
-name = "Test_Viper_Detectors_iXon" # filename you want to write, no extension
+name = "ProEM_Mag_5_Band_U" # filename you want to write, no extension
 overwrite = True # True if you wish to overwrite files with the same name
+detector_name = "Test_Global_50FPS" 
 
-## Initial Values for Shutter
-detector_name = "iXon887" 
-number_of_subdivisions = 32 # Number of Subdivisions to divide up rolling shutter. Leave blank for Global Shutter
+## Properties for EMCCD
+EM_gain = None # Set EM Gain for EMCCDs. If running a detector with no EM Gain, set = None
+EM_saturation = None # Set behavior when full well depth is reached. None means saturated pixels will be automatically set to full well depth. np.nan means saturated pixels will be set to np.nan
 
 ## Properties of the Focal Grid
 q=2 # Number of pixels per resolution element
@@ -38,7 +39,7 @@ velocity = 30. # (m/s)
 pupil_diameter = 3.048 # (meter)
 f_number = 13 # effective focal ratio
 grid_size = 256 # Number of pixels per dimension
-filter_name = 'V' # Name of filter
+filter_name = 'U' # Name of filter
 telescope_pupil_generator = make_lick_aperture()
 
 
@@ -95,13 +96,13 @@ focal_grid = make_focal_grid(q=q,
                              reference_wavelength=wavelength)
 
 ## Define the Detector
-call_detector = "viper_detector." + detector_name + "(focal_grid," + filter_name + ")"
-try:
-    detector = eval(call_detector)
-except:
-    print("Error, invalid detector name.")
-    print("Exiting...")
-    quit()                            
+call_detector = "viper_detector." + detector_name + "(focal_grid, " + f'"{filter_name}"'
+if EM_gain == None:
+    call_detector += ")"
+else:
+    call_detector += ", " + str(EM_gain)+ ", " + str(EM_saturation) +")"
+print(call_detector)
+detector = eval(call_detector)                        
 
 ## Generating the propagator
 print("Generating the propagator")
@@ -123,8 +124,10 @@ print("Creating the Rolling FITS file")
 hdr = fits.Header()
 hdr['Title'] = name
 hdr['Author'] = "Written by Kyle Lam."
-hdr['FPS'] = str(detector.output_fps()) + " # Readout speed of the detector in fps"
-hdr['DetSize'] = str(detector.output_detector_size()) + " # width of shortest side of detector."
+hdr['DetName'] = detector_name + " # Name of detector"
+hdr['DetType'] = str(detector.detector_type) + " # Type of detector"
+hdr['FPS'] = str(detector.max_fps) + " # Readout speed of the detector in fps"
+hdr['DetSize'] = str(detector.detector_size) + " # width of shortest side of detector."
 hdr['q'] = str(q) + " # Number of pixels per resolution element"
 hdr['NAiry'] = str(nairy) + " # The spatial extent of the grid radius in resolution elements"
 hdr['ExpoTime'] = str(exposure_time) + " # Exposure time in seconds"
@@ -136,42 +139,53 @@ hdr['PupDiamt'] = str(pupil_diameter) + " # Pupil Diameter"
 hdr['FNum'] = str(f_number) + " # F Number"
 hdr['GridSize'] = str(grid_size) + " # Grid Size"
 hdr['FiltName'] = str(filter_name) + " # Filter Name"
-hdr['QE'] = str(detector.output_QE) + " # Quantum Efficiency"
-hdr['DarkCurr'] = str(detector.output_dark_current()) + " # Dark Current"
-hdr['RdNoise'] = str(detector.output_read_noise()) + " # Read Noise"
-hdr['FltField'] = str(detector.output_flat_field()) + "# Flat Field"
-hdr['PhtNoise'] = str(detector.output_photon_noise()) + " # Photon Noise"
+hdr['QE'] = str(detector.QE) + " # Quantum Efficiency"
+hdr['DarkCurr'] = str(detector.dark_current_rate) + " # Dark Current"
+hdr['RdNoise'] = str(detector.read_noise) + " # Read Noise"
+hdr['FltField'] = str(detector.flat_field) + "# Flat Field"
+hdr['PhtNoise'] = str(detector.include_photon_noise) + " # Photon Noise"
 hdr['PriMag'] = str(mag) + " # Magnitude of Primary"
 hdr['PriStoke'] = str(stokes_vector) + " # Stokes Vector of Primary"
 hdr['Contrast'] = str(contrast) + " # Companion Contrast"
 hdr['ComStoke'] = str(stokes_ps) + " # Stokes Vector of Companion"
 hdr['AngSep'] = str(angular_separation) + " # Angular Separation"
 hdr['Wavelnth'] = str(wavelength) + " # Wavelength"
-hdr['Shutter'] = str(detector.output_shutter_type()) + " # Shutter Type"
+hdr['Shutter'] = str(detector.shutter_type) + " # Shutter Type"
+try:
+	hdr['EMGain'] = str(detector.EM_gain) + " # EM Gain Multiplier"
+except AttributeError:
+	pass
+try:
+	hdr['EMSat'] = str(detector.EM_saturate) + " # EM Saturate Behavior"
+except AttributeError:
+	pass
+try:
+	hdr['FullWell'] = str(detector.full_well_depth) + " # Full Well Depth"
+except AttributeError:
+	pass
 empty_primary = fits.PrimaryHDU(header=hdr)
 hdul = fits.HDUList([empty_primary])
 
 ## Create the shutter image
 print("Generating the Shutter Image")
-if detector.output_shutter_type() == "Rolling":
+if detector.shutter_type == "Rolling":
     for i in range(exposure_total):
         print("Percent complete = ", round((i+1)/exposure_total * 100, 3), end = '\r')
-        rolling_image = detector.roll_shutter([pupil_wavefront, wf_planet], layer, prop, exposure_time, number_of_subdivisions)
+        rolling_image = detector.roll_shutter([pupil_wavefront, wf_planet], layer, prop, exposure_time)
         image_hdu = fits.ImageHDU(rolling_image)
         hdul.append(image_hdu)
-elif detector.output_shutter_type() == "Global":
+elif detector.shutter_type == "Global":
     for i in range(exposure_total):
         print("Percent complete = ", round((i+1)/exposure_total * 100, 3), end = '\r')
         layer.t += exposure_time
         detector.integrate(prop((layer(pupil_wavefront))),exposure_time)
         detector.integrate(prop((layer(wf_planet))),exposure_time) 
         image_comb = detector.read_out()
-        image_hdu = fits.ImageHDU(image_comb)
+        image_hdu = fits.ImageHDU(image_comb.shaped)
         hdul.append(image_hdu)
 else:
     print("Error, Check Shutter Type in viper_detectors")
     quit()
-
 
 ## Write the FITS file
 print()
@@ -180,4 +194,4 @@ hdul.writeto(fits_name)
 header_name = name + "_Header.txt"
 hdul[0].header.totextfile(header_name, endcard = False, overwrite = True)
 print("FITS file", fits_name,  "generated.")
-    
+winsound.Beep(1000, 300)    
