@@ -242,7 +242,7 @@ class iXon897(NoisyDetector):
         this is an array, the subsampling factor will be different for
         each dimension. Default: 1.
     '''
-    def __init__(self, detector_grid, filter, EM_gain = None, EM_saturate = None , subsampling=1):
+    def __init__(self, detector_grid, filter, EM_gain = None, EM_saturate= None , subsampling=1):
         NoisyDetector.__init__(self, detector_grid, subsampling)
 
         # Setting the start charge level.
@@ -495,6 +495,146 @@ class ORCA_Quest(NoisyDetector):
             end = int(self.detector_grid.size*((j+1)/self.number_of_subdivisions))
             image_comb[start:end]+=image_row[start:end]        
         return image_comb.shaped
+
+class Marana(NoisyDetector):
+    '''A subclass of NoisyDetector class based on the Andor Marana.\n
+
+    Details can be found at: \n
+    https://andor.oxinst.com/assets/uploads/products/andor/documents/andor-marana-scmos-specifications.pdf \n
+
+    The parameters of this detector have been hardcoded into the subclass based on values drawn from 
+    brochures and user manuals. These parameters include:\n
+    dark current rate - found in documentation \n
+    read noise - found in documentation (Note that when a range of read noises was given in the documentation,
+        the MAXIMUM read noise was always choosen. Read Noise generally increases as a function of frame rate
+        and given the speckle applications of this project, we presumed that the maximum frame rate was desired.
+        Presuming the maximum frame rate lead to the choice of the maximum read noise.)
+    flat field - presumed to be zero \n
+    include photon noise - presumed to be true \n
+    max fps - The maximum FPS at the size most relevant to the VIPER Project. \n
+    detector size - The size of the short length of the detector. Many detectors can have their regions of 
+        interest reduced in order to increase frame rate. Some detectors reduce ROI into smaller sqaures 
+        while others reduce ROI into rows with max length but reduced height. In the case of square ROIs
+        the detector size corresponds to the side length of the square. In the case of rectangular ROIs
+        the detector size corresponds the the length of the short side, as the long side remains unchanged. \n
+    shutter type - The electronic shutter that determines the way in which photons are captured and then read out
+        of the detector. Can be either Rolling or Global. \n
+    detector type - The classification of the detector. Either EMCCD or some form of CMOS camera. \n
+    quantum efficiency - The quantum efficiency of the detector calculated based on taking a weighted average
+        of the QE curves given in documentation with the weights being the transmission ratios of the filters
+        U, B, V, R, and I. \n
+
+    Parameters
+    ----------
+    detector_grid : Grid
+        The grid on which the detector samples.
+    filter : string
+        A letter indicating the filter from UBVRI. Relevant for computing the quantum efficiency.
+    subsampling : integer or scalar or ndarray
+        The number of subpixels per pixel along one axis. For example, a
+        value of 2 indicates that 2x2=4 subpixels are used per pixel. If
+        this is a scalar, it will be rounded to the nearest integer. If
+        this is an array, the subsampling factor will be different for
+        each dimension. Default: 1.
+    '''	
+    def __init__(self, detector_grid, filter, subsampling=1):
+        NoisyDetector.__init__(self, detector_grid, subsampling)
+
+        # Setting the start charge level.
+        self.accumulated_charge = 0
+
+                # The parameters.
+        self.dark_current_rate = 0.7
+        self.read_noise = 1.6
+        self.flat_field = 0
+        self.include_photon_noise = True
+        self.max_fps = 24
+        self.detector_size = 2048
+        self.shutter_type = 'Rolling'
+        self.detector_type = "sCMOS"
+        self.number_of_subdivisions = 32
+                
+        # Set Quantum Efficiency based on filter
+        if filter == 'U' or filter == 'u':
+            self.QE = 0.439
+        elif filter == 'B' or filter == 'b':
+            self.QE = 0.782
+        elif filter == 'V' or filter == 'v':
+            self.QE = 0.941
+        elif filter == 'R' or filter == 'r':
+            self.QE = 0.813
+        elif filter == 'I' or filter == 'i':
+            self.QE = 0.424
+        else:
+            raise ValueError("Error, invalid filter name.")
+
+    def integrate(self, wavefront, dt, weight=1):
+        '''Integrates the detector.
+
+        Identical to the integrate funcion of NoisyDetector except includes loss due to Quantum Efficiency.
+
+        Parameters
+        ----------
+        wavefront : Wavefront or array_like
+            The wavefront sets the amount of power generated per unit time.
+        dt : scalar
+            The integration time in units of time.
+        weight : scalar
+            Weight of every unit of integration time.
+        '''
+        
+        # The power that the detector detects during the integration.
+        if hasattr(wavefront, 'power'):
+            power = wavefront.power
+        else:
+            power = wavefront
+
+        self.accumulated_charge += self.QE*subsample_field(power, subsampling=self.subsamping, new_grid=self.detector_grid, statistic='sum') * dt * weight
+
+        # Adding the generated dark current.
+        self.accumulated_charge += self.dark_current_rate * dt * weight
+
+    def roll_shutter(self, wavefronts, layer, prop, exposure_time):
+        '''Simulates a rolling shutter.
+
+        A combination of integrate and read_out that simulates the effects of a rolling shutter.
+
+        Parameters
+        ----------
+        wavefront : Wavefront or array_like
+            The wavefront sets the amount of power generated per unit time.
+        layer: Atmospheric layer
+            The atmospheric layer 
+        prop: Propagator
+            The propagator for the shutter
+        exposure_time: Scalar
+            The total exposure time in seconds
+
+        Returns
+        ----------
+        Field.shaped
+            The final shaped detector image.
+        '''
+        number_of_rows = int(np.sqrt(self.detector_grid.size))
+        row_readout_time = 1/(self.max_fps*number_of_rows)
+        row_differential_time = row_readout_time*number_of_rows/self.number_of_subdivisions
+        layer.t += exposure_time-(row_differential_time*self.number_of_subdivisions)
+        for k in wavefronts:
+            self.integrate(prop((layer(k))),exposure_time-(row_differential_time*self.number_of_subdivisions)) 
+        read_noise_temp = self.read_noise
+        self.read_noise = 0 # Prevent double counting of the read noise when reading out the detector twice. 
+        image_comb = self.read_out()
+        for j in range(self.number_of_subdivisions):
+            layer.t += row_differential_time
+            for k in wavefronts:
+                self.integrate(prop((layer(k))),row_differential_time)       
+            self.read_noise = read_noise_temp
+            image_row = self.read_out()
+            start = int(self.detector_grid.size*(j)/self.number_of_subdivisions)
+            end = int(self.detector_grid.size*((j+1)/self.number_of_subdivisions))
+            image_comb[start:end]+=image_row[start:end]        
+        return image_comb.shaped
+
 
 class Kinetix(NoisyDetector):
     '''A subclass of NoisyDetector class based on the Kinetix.\n
