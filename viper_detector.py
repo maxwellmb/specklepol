@@ -2,6 +2,40 @@ import numpy as np
 import sys
 from hcipy import *
 
+def apd_large_poisson(lam, thresh=1e6):
+    """
+    Draw samples from a Poisson distribution while taking into account APD Excess noise and taking care of large values of `lam`.
+
+    At large values of `lam` the distribution automatically switches to the corresponding normal distribution.
+    This switch is independently decided for each expectation value in the `lam` array.
+
+    The value of the APD Excess Noise is 1.3, and was found in https://www-spiedigitallibrary-org.proxy.library.ucsb.edu:9443/journals/Journal-of-Astronomical-Telescopes-Instruments-and-Systems/volume-4/issue-2/026001/Overview-of-the-SAPHIRA-detector-for-adaptive-optics-applications/10.1117/1.JATIS.4.2.026001.full?SSO=1
+
+    Parameters
+    ----------
+    lam : array_like
+        Expectation value for the Poisson distribution. Must be >= 0.
+    thresh : float
+        The threshold at which the distribution switched from a Poisson to a normal distribution.
+
+    Returns
+    -------
+    array_like
+        The drawn samples from the Poisson or normal distribution, depending on the expectation value.
+    """
+    large = lam > thresh
+    small = ~large
+
+    # Use normal approximation if the number of photons is large
+    n = np.zeros(lam.shape)
+    n[large] = np.round(lam[large] + np.random.normal(size=np.sum(large)) * np.sqrt(1.3*lam[large]))
+    n[small] = np.random.poisson(1.3*lam[small], size=np.sum(small))-lam[small]
+
+    if hasattr(lam, 'grid'):
+        n = Field(n, lam.grid)
+
+    return n
+
 def emgain_large_poisson(lam, thresh=1e6):
     """
     Draw samples from a Poisson distribution while taking into account EM multiplicative noise and taking care of large values of `lam`.
@@ -356,6 +390,119 @@ class iXon897(NoisyDetector):
         self.accumulated_charge = 0
 
         return output_field   
+class SAPHIRA(NoisyDetector):
+    '''A subclass of NoisyDetector class based on the iXon Ultra 897.\n
+
+    Details can be found at: \n
+    http://www.eso.org/~gfinger/montreal/ProcSPIE_eapd_gfi_Montreal_2014_9148-42_final.pdf \n
+
+    Specifc values were fine tuned to match the follow project: \n
+    https://ui.adsabs.harvard.edu/abs/2020JATIS...6c9003B/abstract \n
+
+    The parameters of this detector have been hardcoded into the subclass based on values drawn from 
+    brochures and user manuals. These parameters include:\n
+    dark current rate - found in documentation \n
+    read noise - found in documentation (Note that when a range of read noises was given in the documentation,
+        the MAXIMUM read noise was always choosen. Read Noise generally increases as a function of frame rate
+        and given the speckle applications of this project, we presumed that the maximum frame rate was desired.
+        Presuming the maximum frame rate lead to the choice of the maximum read noise.)
+    flat field - presumed to be zero \n
+    include photon noise - presumed to be true \n
+    max fps - The maximum FPS at the size most relevant to the VIPER Project. \n
+    detector size - The size of the short length of the detector. Many detectors can have their regions of 
+        interest reduced in order to increase frame rate. Some detectors reduce ROI into smaller sqaures 
+        while others reduce ROI into rows with max length but reduced height. In the case of square ROIs
+        the detector size corresponds to the side length of the square. In the case of rectangular ROIs
+        the detector size corresponds the the length of the short side, as the long side remains unchanged. \n
+    shutter type - The electronic shutter that determines the way in which photons are captured and then read out
+        of the detector. Can be either Rolling or Global. \n
+    detector type - The classification of the detector. Either EMCCD or some form of CMOS camera. \n
+    quantum efficiency - The quantum efficiency of the detector calculated from averaging
+        the QE graph found in Finger's Paper at the H-band.
+
+    Parameters
+    ----------
+    detector_grid : Grid
+        The grid on which the detector samples.
+    subsampling : integer or scalar or ndarray
+        The number of subpixels per pixel along one axis. For example, a
+        value of 2 indicates that 2x2=4 subpixels are used per pixel. If
+        this is a scalar, it will be rounded to the nearest integer. If
+        this is an array, the subsampling factor will be different for
+        each dimension. Default: 1.
+    '''
+    def __init__(self, detector_grid, subsampling=1):
+        NoisyDetector.__init__(self, detector_grid, subsampling)
+
+        # Setting the start charge level.
+        self.accumulated_charge = 0
+
+        # The parameters.
+        self.dark_current_rate = 0.025 # from https://iopscience.iop.org/article/10.3847/1538-3881/aa9610
+        self.read_noise = 0.37 #Minimum effective read noise according to C Bond
+        self.flat_field = 0
+        self.include_photon_noise = True
+        self.max_fps = 1500
+        self.detector_size = 128
+        self.shutter_type = 'Global'
+        self.detector_type = "APD Array"
+        self.QE = 0.566 #Based on average found in Finger, G
+
+        
+    def integrate(self, wavefront, dt, weight=1):
+        '''Integrates the detector.
+
+        Identical to the integrate funcion of NoisyDetector except includes loss due to Quantum Efficiency.
+
+        Parameters
+        ----------
+        wavefront : Wavefront or array_like
+            The wavefront sets the amount of power generated per unit time.
+        dt : scalar
+            The integration time in units of time.
+        weight : scalar
+            Weight of every unit of integration time.
+        '''
+        
+        # The power that the detector detects during the integration.
+        if hasattr(wavefront, 'power'):
+            power = wavefront.power
+        else:
+            power = wavefront
+
+        self.accumulated_charge += self.QE*subsample_field(power, subsampling=self.subsamping, new_grid=self.detector_grid, statistic='sum') * dt * weight
+
+        # Adding the generated dark current.
+        self.accumulated_charge += self.dark_current_rate * dt * weight
+
+    def read_out(self):
+        '''Reads out the detector.
+
+        Identical to the read_out function of NoisyDetector except EM multiplicative noise and EM gain has been included.
+
+        Returns
+        ----------
+        Field
+            The final detector image.
+        '''
+        # Make sure not to overwrite output
+        output_field = self.accumulated_charge.copy()
+
+        # Adding photon noise.
+        if self.include_photon_noise:
+            output_field = apd_large_poisson(output_field, thresh=1e6)
+
+        # Adding flat field errors.
+        output_field *= self.flat_field
+
+        # Adding read-out noise.
+        output_field += np.random.normal(loc=0, scale=self.read_noise, size=output_field.size)
+
+        # Reset detector
+        self.accumulated_charge = 0
+
+        return output_field   
+
 
 class ORCA_Quest(NoisyDetector):
     '''A subclass of NoisyDetector class based on the ORCA Quest.\n
